@@ -22,8 +22,8 @@ EVERY_VISIT_TABLE = "city-of-swan-youth-centres.every_visit_data.every_visit"
 ANNUAL_VISIT_TABLE = "city-of-swan-youth-centres.annual_visit_data.annual_visit"
 
 QUESTIONNAIRE_TABLE_MAP = {
-    "8895": EVERY_VISIT_TABLE,   # Every Visit
-    "8208": ANNUAL_VISIT_TABLE   # Annual Visit
+    "8208": EVERY_VISIT_TABLE,   # Every Visit
+    "8895": ANNUAL_VISIT_TABLE   # Annual Visit #
 }
 
 def get_bq_client():
