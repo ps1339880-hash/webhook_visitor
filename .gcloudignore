@@ -1,0 +1,26 @@
+# This file specifies files that are *not* uploaded to Google Cloud
+# using gcloud commands.
+
+.gcloudignore
+.git
+.gitignore
+
+# Python pycache:
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+
+# Sample files
+sample.json
