@@ -8,7 +8,7 @@ import json
 import os
 import secrets
 
-# Load environment variables from .env file
+# Load env vars
 load_dotenv()
 
 app = FastAPI()
@@ -17,18 +17,17 @@ security = HTTPBasic()
 BASIC_USER = os.getenv("BASIC_AUTH_USER")
 BASIC_PASS = os.getenv("BASIC_AUTH_PASS")
 
-def get_bq_client():
-    """Get BigQuery client with proper credentials"""
-    return bigquery.Client()
+# BigQuery tables
+EVERY_VISIT_TABLE = "city-of-swan-youth-centres.every_visit_data.every_visit"
+ANNUAL_VISIT_TABLE = "city-of-swan-youth-centres.annual_visit_data.annual_visit"
 
-# Map questionnaire IDs to BigQuery tables
 QUESTIONNAIRE_TABLE_MAP = {
-    "8208": os.getenv("TABLE_ANNUAL_VISIT", "project.dataset.annual_visit"),
-    "8895": os.getenv("TABLE_REASON_FOR_VISIT", "project.dataset.reason_for_visit")
+    "8895": EVERY_VISIT_TABLE,   # Every Visit
+    "8208": ANNUAL_VISIT_TABLE   # Annual Visit
 }
 
-# Default fallback table
-DEFAULT_TABLE = os.getenv("DEFAULT_TABLE", "project.dataset.visitor_responses")
+def get_bq_client():
+    return bigquery.Client()
 
 def verify_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
     if not (
@@ -48,14 +47,12 @@ async def visitor_webhook(
     form = await request.form()
     data = dict(form)
 
-    # Save full raw payload
     raw_payload = json.dumps(data)
+    received_at = datetime.utcnow().isoformat()
 
-    # Base fields
     responder_name = data.get("name")
     location = data.get("location_name")
     signed_in = data.get("signed_in")
-    received_at = datetime.utcnow().isoformat()
 
     # Group questionnaire submissions
     submissions = defaultdict(dict)
@@ -65,45 +62,57 @@ async def visitor_webhook(
             field = key.split("[")[2].split("]")[0]
             submissions[idx][field] = value
 
-    # Group rows by questionnaire ID to insert into correct tables
     table_rows = defaultdict(list)
 
     for submission in submissions.values():
         questionnaire_id = submission.get("questionnaire_id")
-        
-        # Determine target table based on questionnaire ID
-        table_id = QUESTIONNAIRE_TABLE_MAP.get(questionnaire_id, DEFAULT_TABLE)
-        
-        row = {
+        table_id = QUESTIONNAIRE_TABLE_MAP.get(questionnaire_id)
+
+        if not table_id:
+            continue  # unknown questionnaire → ignore safely
+
+        base_common = {
             "responder_name": submission.get("guest_name") or responder_name,
             "submitted": submission.get("created") or signed_in,
             "location": location,
             "questionnaire_name": submission.get("questionnaire_name"),
-            "questionnaire_id": questionnaire_id,
-            "reason_for_visit": None,      # fill later if answers exist
-            "young_person": None,          # fill later if answers exist
-            "purpose_of_visit": None,      # fill later if answers exist
+            "reason_for_visit": None,
+            "young_person": None,
             "raw_payload": raw_payload,
             "received_at": received_at
         }
-        
+
+        # 🔹 Build row PER TABLE SCHEMA
+        if table_id == EVERY_VISIT_TABLE:
+            row = {
+                **base_common,
+                "purpose_of_visit": None
+            }
+
+        elif table_id == ANNUAL_VISIT_TABLE:
+            row = {
+                **base_common,
+                "age": None
+            }
+
         table_rows[table_id].append(row)
 
-    # Insert rows into respective tables
-    total_inserted = 0
-    all_errors = []
+    if not table_rows:
+        return {"status": "ok", "rows_inserted": 0}
 
-    bq = get_bq_client()  # Initialize BigQuery client when needed
+    bq = get_bq_client()
+    total_inserted = 0
+    errors_all = []
     
     for table_id, rows in table_rows.items():
         errors = bq.insert_rows_json(table_id, rows)
         if errors:
-            all_errors.append({"table": table_id, "errors": errors})
+            errors_all.append({table_id: errors})
         else:
             total_inserted += len(rows)
 
-    if all_errors:
-        raise HTTPException(status_code=500, detail=all_errors)
+    if errors_all:
+        raise HTTPException(status_code=500, detail=errors_all)
 
     return {
         "status": "ok",
