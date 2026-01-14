@@ -26,20 +26,17 @@ BASIC_USER = os.getenv("BASIC_AUTH_USER")
 BASIC_PASS = os.getenv("BASIC_AUTH_PASS")
 
 # BigQuery configuration
-PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-DATASET_ID = os.getenv("BQ_DATASET_ID")
-EVERY_VISIT_TABLE = f"{PROJECT_ID}.{DATASET_ID}.every_visit"
-ANNUAL_VISIT_TABLE = f"{PROJECT_ID}.{DATASET_ID}.annual_visit"
+EVERY_VISIT_TABLE = "city-of-swan-youth-centres.every_visit_data.every_visit"
+ANNUAL_VISIT_TABLE = "city-of-swan-youth-centres.annual_visit_data.annual_visit"
 
 # Questionnaire mapping
 QUESTIONNAIRE_TABLE_MAP = {
-    "every_visit_questionnaire_id": EVERY_VISIT_TABLE,
-    "annual_visit_questionnaire_id": ANNUAL_VISIT_TABLE,
+    "8208": EVERY_VISIT_TABLE,   # Every Visit
+    "8895": ANNUAL_VISIT_TABLE   # Annual Visit
 }
 
 def get_bq_client():
-    """Initialize BigQuery client"""
-    return bigquery.Client(project=PROJECT_ID)
+    return bigquery.Client()
 
 def verify_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
     """Verify HTTP Basic Authentication"""
