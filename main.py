@@ -84,6 +84,81 @@ def verify_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
     return credentials
 
 
+def parse_form_to_nested(data: dict) -> dict:
+    """Parse flat form-encoded keys with bracket notation into a nested dict.
+
+    Handles keys like:
+        contractorName -> top-level
+        submissions[0][questionnaireId] -> nested
+        submissions[0][answers][0][questionId] -> deeply nested
+    """
+    import re
+    result = {}
+
+    for key, value in data.items():
+        # Split key into parts: submissions[0][answers][1][questionId]
+        # -> ['submissions', '0', 'answers', '1', 'questionId']
+        parts = re.split(r'\[|\]\[|\]', key)
+        parts = [p for p in parts if p != '']
+
+        current = result
+        for i, part in enumerate(parts[:-1]):
+            next_part = parts[i + 1]
+            # If next part is a digit, we need a list-like dict; use dict with int keys
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+
+        current[parts[-1]] = value
+
+    return result
+
+
+def dict_to_list(d: dict) -> list:
+    """Convert a dict with numeric string keys to a list of dicts."""
+    if not isinstance(d, dict):
+        return d
+    # Check if all keys are numeric
+    if all(k.isdigit() for k in d.keys()):
+        sorted_keys = sorted(d.keys(), key=int)
+        return [d[k] for k in sorted_keys]
+    return d
+
+
+def extract_submissions(nested: dict) -> list:
+    """Extract submissions from the parsed nested form data."""
+    raw_subs = nested.get("submissions", {})
+    if not isinstance(raw_subs, dict):
+        return []
+
+    submissions = []
+    for idx in sorted(raw_subs.keys(), key=lambda x: int(x) if x.isdigit() else x):
+        sub = raw_subs[idx]
+        if not isinstance(sub, dict):
+            continue
+
+        submission = {
+            "questionnaireId": sub.get("questionnaireId", ""),
+            "questionnaireName": sub.get("questionnaireName", ""),
+            "answers": [],
+        }
+
+        raw_answers = sub.get("answers", {})
+        if isinstance(raw_answers, dict):
+            for aidx in sorted(raw_answers.keys(), key=lambda x: int(x) if x.isdigit() else x):
+                ans = raw_answers[aidx]
+                if isinstance(ans, dict):
+                    submission["answers"].append({
+                        "questionId": ans.get("questionId", ""),
+                        "question": ans.get("question", ""),
+                        "answer": ans.get("answer", ""),
+                    })
+
+        submissions.append(submission)
+
+    return submissions
+
+
 def extract_answers(answers: list, question_map: dict) -> dict:
     """Extract answer values from the answers list based on question ID mapping."""
     result = {field: None for field in question_map.values()}
@@ -102,7 +177,7 @@ async def visitor_webhook(
     request: Request,
     credentials: HTTPBasicCredentials = Depends(verify_basic_auth)
 ):
-    """Handle visitor webhook - accepts JSON payload"""
+    """Handle visitor webhook - accepts form-encoded payload"""
     logger.info("=" * 80)
     logger.info("WEBHOOK REQUEST")
     logger.info("=" * 80)
@@ -112,25 +187,38 @@ async def visitor_webhook(
     logger.info(f"Content-Type: {request.headers.get('content-type', 'Not set')}")
     logger.info(f"Client: {request.client.host if request.client else 'Unknown'}")
 
-    # Parse JSON body
-    try:
-        payload = await request.json()
-        logger.info(f"Payload keys: {list(payload.keys())}")
-    except Exception as e:
-        logger.error(f"JSON parsing error: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
+    # Read raw body
+    body_bytes = await request.body()
+    logger.info(f"Raw body length: {len(body_bytes)} bytes")
+    logger.info(f"Raw body: {body_bytes.decode('utf-8', errors='replace')[:1000]}")
 
-    raw_payload = json.dumps(payload)
+    # Parse form data
+    try:
+        form = await request.form()
+        data = dict(form)
+        logger.info(f"Form data ({len(data)} fields):")
+        logger.info(json.dumps(data, indent=2, default=str))
+    except Exception as e:
+        logger.error(f"Form parsing error: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid form data: {str(e)}")
+
+    # Store raw payload
+    raw_payload = json.dumps(data)
     received_at = datetime.now(timezone.utc).isoformat()
 
-    # Extract top-level fields
-    contractor_name = payload.get("contractorName")
-    organisation = payload.get("organisation")
-    visitor_mobile = payload.get("visitorMobile") or None
-    location = payload.get("location")
-    sign_in = payload.get("signIn")
+    # Parse flat form keys into nested structure
+    nested = parse_form_to_nested(data)
+    logger.info(f"Nested keys: {list(nested.keys())}")
 
-    submissions = payload.get("submissions", [])
+    # Extract top-level fields
+    contractor_name = nested.get("contractorName")
+    organisation = nested.get("organisation")
+    visitor_mobile = nested.get("visitorMobile") or None
+    location = nested.get("location")
+    sign_in = nested.get("signIn")
+
+    # Extract submissions
+    submissions = extract_submissions(nested)
     logger.info(f"Found {len(submissions)} submissions")
 
     # Process each submission
