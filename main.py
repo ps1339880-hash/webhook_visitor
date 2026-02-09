@@ -208,7 +208,7 @@ async def visitor_webhook(
 
     # Parse flat form keys into nested structure
     nested = parse_form_to_nested(data)
-    logger.info(f"Nested keys: {list(nested.keys())}")
+    logger.info(f"Decoded payload: {json.dumps(nested, indent=2, default=str)}")
 
     # Extract top-level fields
     contractor_name = nested.get("contractorName")
